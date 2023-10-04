@@ -7,7 +7,7 @@ from datetime import datetime
 import re
 import bg3data_lib as bg3lib
 from typing import Dict, List, Any, Union, Tuple
-
+import json
 #Dict_Table = TypeVar('Dict_Table', bound=Dict[str, Dict[str, Any]])
 #List_Str = TypeVar('List_Str', bound=Union[List[str], None])
 
@@ -15,14 +15,14 @@ from typing import Dict, List, Any, Union, Tuple
 Dict_Table = Dict[str, Dict[str, Any]]
 List_Str = Union[List[str], None]
 # #############################################################################################
-# START - User options and settings
+# START - DEFAULT User options and settings - overwrite with bg3data_config.json
 #
 Option_fill_templates_recursively = True
 Option_fill_merged_recursively = True
 Option_add_timestamp = True
-Option_save_to_excel = False
-Option_save_to_json_dict = False
-Option_save_to_json_array = False
+Option_save_to_excel = True
+Option_save_to_json_dict = True
+Option_save_to_json_array = True
 Option_save_to_sqlite = True
 
 # List of languages to use for translations
@@ -32,9 +32,6 @@ TRANSLATION_LANGUAGES = ["English"]
 LOGGING_LEVEL = logging.INFO  # possible values are: 'DEBUG,INFO,WARNING,ERROR,CRITICAL'
 UNPACKED_DATA_FOLDER = Path('G:/BG3/Tools/bg3-modders-multitool/UnpackedData')
 OUTPUT_FOLDER = Path('G:/BG3/Dev/Output')
-#
-# END - User options and settings
-# #############################################################################################
 
 # Sorted list of folders to process (the order matters!)
 # L1 is used for "merged" data
@@ -81,6 +78,11 @@ FLAGS_FOLDERS = [ # Sorted list of template folders to process for "flags" data
 TAGS_FOLDERS = [ # Sorted list of template folders to process for "tags" data
     "Tags",
 ]
+
+#
+# END - User options and settings
+# #############################################################################################
+
 
 # Define the Templates class to handle templates files and lookup
 class Templates:
@@ -166,7 +168,20 @@ def process_templates_folders(output_folder: Path) -> Dict_Table:
             output_folder / "Json files (array)" / f"Templates_array.json",
         )
     if Option_save_to_excel:
-        bg3lib.save_to_excel_with_xlsxwriter_direct(templates_data, output_folder / "Excel Files" / "Templates.xlsx", "Templates", columns_order)
+        #### save all in one sheet
+        #FIXME: bg3lib.save_to_excel_with_xlsxwriter_direct(templates_data, output_folder / "Excel Files" / "Templates_All.xlsx", "Templates", columns_order)
+
+        #### save all per type 
+        # Get all unique 'type' values
+        unique_types = set(data['Type'] for data in templates_data.values())
+
+        for filtered_type in unique_types:
+            # Filter data for the current 'type'
+            filtered_data = {key: data for key, data in templates_data.items() if data['Type'] == filtered_type}
+            
+            # Process the filtered data
+            bg3lib.save_to_excel_with_openpyxl_direct(filtered_data, output_folder / "Excel Files" / "Templates_by_Type.xlsx", filtered_type, columns_order)
+
     if Option_save_to_sqlite:
         bg3lib.save_data_dict_to_sqlite(templates_data, output_folder / "bg3data-raw.sqlite3", "Templates", columns_order)
 
@@ -382,11 +397,11 @@ def process_stats_folders(output_folder: Path):
                     records.append(current_record.copy())
                     current_record = {}
             elif line.startswith("new entry"):
-                current_record = {'EntryName': line.split('"')[1]}
+                current_record = {'Name': line.split('"')[1]}
             elif line.startswith("type"):
-                current_record['EntryType'] = line.split('"')[1]
+                current_record['Type'] = line.split('"')[1]
             elif line.startswith("using"):
-                current_record['EntryUsing'] = line.split('"')[1]
+                current_record['Using'] = line.split('"')[1]
             elif line.startswith("data"):
                 data_key, data_value = parse_data_property(line)
                 if data_value:
@@ -421,7 +436,7 @@ def process_stats_folders(output_folder: Path):
 
                 # Fill data_dict
                 for record in records:
-                    entry_name = record['EntryName']
+                    entry_name = record['Name']
                     if entry_name in data_dict:
                         existing_record = data_dict[entry_name]
                         logging.debug(
@@ -429,7 +444,7 @@ def process_stats_folders(output_folder: Path):
                     data_dict[entry_name] = record
 
         # --- Moving important columns in front of the records
-        columns_order = ["EntryName", "EntryType", "EntryUsing"]
+        columns_order = ["Name", "Type", "Using"]
         if output_sheet not in ('Characters', 'CriticalHitTypes'):
             for column in ["DisplayName", "Description"]:
                 for language in TRANSLATION_LANGUAGES:
@@ -467,7 +482,7 @@ def process_stats_folders(output_folder: Path):
                 # fill data_dict
 
                 for record in records:
-                    entry_name = record['EntryName']
+                    entry_name = record['Name']
                     if entry_name in data_dict:
                         existing_record = data_dict[entry_name]
                         logging.debug(
@@ -475,7 +490,7 @@ def process_stats_folders(output_folder: Path):
                     data_dict[entry_name] = record
 
         # --- Moving important columns in front of the records
-        columns_order = ["EntryName", "EntryType", "EntryUsing"]
+        columns_order = ["Name", "Type", "Using"]
         if output_sheet not in ('Characters', 'CriticalHitTypes'):
             for column in ["DisplayName", "Description"]:
                 for language in TRANSLATION_LANGUAGES:
@@ -490,33 +505,15 @@ def process_stats_folders(output_folder: Path):
         logging.info(
             f"STATS - Processed {output_sheet}: {len(data_dict)} rows")
 
-        # Create a DataFrame from the data dictionary
-        #data_frame = pd.DataFrame.from_dict(data_dict, orient="index")
-        '''
-        # Initialize an empty list for the reordered columns
-        reordered_columns = []
-
-        # Add columns from columns_order if they exist in the DataFrame
-        for col in columns_order:
-            if col in data_frame.columns:
-                reordered_columns.append(col)
-        # Add all remaining columns from the DataFrame that were not explicitly in columns_order
-        remaining_columns = [
-            col for col in data_frame.columns if col not in reordered_columns]
-        reordered_columns.extend(remaining_columns)
-
-        # Create the reordered DataFrame
-        data_frame = data_frame[reordered_columns]
-        '''
         if Option_save_to_json_dict:
             bg3lib.save_to_json_dict(data_dict, output_folder /
-                              "Json files (dict)" / f"{output_sheet}_dict.json")
+                              "Json files (dict)" / f"Stats_{output_sheet}_dict.json")
         if Option_save_to_json_array:
             bg3lib.save_to_json_array(data_dict, output_folder /
-                               "Json files (array)" / f"{output_sheet}_array.json")
+                               "Json files (array)" / f"Stats_{output_sheet}_array.json")
         if Option_save_to_excel:
-            bg3lib.save_to_excel_with_xlsxwriter_direct(data_dict, output_folder / "Excel Files" / f"{output_sheet}.xlsx", output_sheet, columns_order)
-            bg3lib.save_to_excel_with_openpyxl_direct(data_dict, output_folder / "Excel Files" / "All_Stats.xlsx", output_sheet, columns_order)
+            bg3lib.save_to_excel_with_xlsxwriter_direct(data_dict, output_folder / "Excel Files" / f"Stats_{output_sheet}.xlsx", output_sheet, columns_order)
+            bg3lib.save_to_excel_with_openpyxl_direct(data_dict, output_folder / "Excel Files" / "Stats_by_Type.xlsx", output_sheet, columns_order)
         if Option_save_to_sqlite:
             bg3lib.save_data_dict_to_sqlite_direct(data_dict, output_folder / "bg3data-raw.sqlite3", output_sheet, columns_order)
 
@@ -597,8 +594,27 @@ def process_flags_folders(output_folder: Path) -> Dict_Table:
         bg3lib.save_data_dict_to_sqlite(data_dict, output_folder / "bg3data-raw.sqlite3", "Flags", columns_order)
     return data_dict
 
+def load_config(config_file: Path):
+    try:
+        # Load the configuration file
+        with open(config_file, 'r') as file:
+            config = json.load(file)
+
+        # Update global variables with loaded values, creating them if they don't exist
+        for var_name, var_value in config.items():
+            if var_name in globals():
+                globals()[var_name] = var_value
+            else:
+                print(f"Warning: Global variable '{var_name}' does not exist and will not be updated.")
+     
+    except FileNotFoundError:
+        print(f"Warning: Config file '{config_file}' not found, using default.")
+
 # Main function
 def main():
+
+    config_file = Path('bg3data_config.json')  # Specify the path to your config file here
+    load_config(config_file)
 
     TimeStamp = ''
     if Option_add_timestamp:
@@ -637,31 +653,25 @@ def main():
     ## ## ## ##
     logging.info(f"ALL DONE!")
 
+def profile_main():
+    print("Profiling enabled")
+    import cProfile, pstats
+    
+    with cProfile.Profile() as pr:
+        main()
+    
+    with open('profiling_stats.txt', 'w') as stream:
+        stats = pstats.Stats(pr, stream=stream)
+        stats.strip_dirs()
+        stats.sort_stats('cumulative')
+        stats.dump_stats("{}.prof_stats".format(__file__))
+        stats.print_stats(10)
+    
 if __name__ == "__main__":
     
-    profiling = 2
-    if profiling == 0:
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "profile":
+        profile_main()
+    else:
         main()
 
-    elif profiling == 1:
-
-        import cProfile, pstats
-        with cProfile.Profile() as pr:
-            main()
-        
-        with open('profiling_stats.txt', 'w') as stream:
-            stats = pstats.Stats(pr, stream=stream)
-            stats.strip_dirs()
-            stats.sort_stats('time')
-            stats.dump_stats('.prof_stats')
-            stats.print_stats()        
-
-    elif profiling == 2:
-        import cProfile, pstats
-        cProfile.run("main()", "{}.profile".format(__file__))
-        stats = pstats.Stats("{}.profile".format(__file__))
-        stats.strip_dirs()
-        stats.sort_stats("time").print_stats(10)
-    else:
-        raise SystemExit(f"Invalid profiling option: {profiling}")
-        

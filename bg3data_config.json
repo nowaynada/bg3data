@@ -1,0 +1,11 @@
+{
+  "Option_fill_templates_recursively": true,
+  "Option_fill_merged_recursively": true,
+  "Option_add_timestamp": true,
+  "Option_save_to_excel": true,
+  "Option_save_to_json_dict": false,
+  "Option_save_to_json_array": false,
+  "Option_save_to_sqlite": false,
+  "TRANSLATION_LANGUAGES": ["English"],
+  "LOGGING_LEVEL": "INFO"
+}

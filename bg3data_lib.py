@@ -30,7 +30,7 @@ EXCEL_COLUMN_FILTER_SIZE: float = 3.0  # to account for the filter arrow size
 
 def elapsed_time(start_time: float) -> str:
     elapsed_time_seconds: float = time.time() - start_time
-    elapsed_time_str: str = "{:.3f}".format(elapsed_time_seconds)  # Format elapsed time with 3 decimal places
+    elapsed_time_str: str = f"{elapsed_time_seconds:.1f}"  # Format elapsed time with 1 decimal places
     return elapsed_time_str
 
 def enable_logging(m_log_file: Path, m_logging_level: int) -> None:
@@ -267,11 +267,11 @@ def save_to_excel_with_xlsxwriter_direct(data_dict: Dict_Table, output_file: Pat
     # Save the workbook
     workbook.close()
 
-    logging.info(f"Saving completed in {elapsed_time(start_time)} (xlsxwriter library)")
+    #logging.info(f"Saving completed in {elapsed_time(start_time)} (xlsxwriter library)")
 
 def save_to_excel_with_openpyxl_direct(data_dict: Dict_Table, output_file: Path, output_sheet: str, columns_order: Optional[List_Str] = None) -> None:
     
-    logging.info(f"Save to excel {output_sheet} sheet to excel workbook {output_file}, (openpyxl library)")
+    logging.info(f"Save to excel workbook {output_file}, sheet: {output_sheet} (openpyxl library)")
     start_time = time.time()
     
     # Ensure the directory path exists
@@ -350,7 +350,7 @@ def save_to_excel_with_openpyxl_direct(data_dict: Dict_Table, output_file: Path,
     workbook.save(output_file)
     
     # Done
-    logging.info(f"Save to excel completed in {elapsed_time(start_time)} (openpyxl library)")
+    #logging.info(f"Save to excel completed in {elapsed_time(start_time)} (openpyxl library)")
     
 def sort_data_dict_columns(m_data_dict: Dict_Table, m_columns_order: List_Str) -> Dict_Table:
     if not m_columns_order:
@@ -539,6 +539,111 @@ def process_lsx_files(m_unpacked_data_folder: Path,
 
     logging.debug(f"{relative_path} - Processed: {lsx_files_count} files")
     return lsx_files_count, overwritten_nodes
+
+
+def data_frame_from_dict(data_dict:Dict_Table, columns_order:List_Str) -> DataFrame:
+    # Create a DataFrame from the data dictionary
+    data_frame = pd.DataFrame.from_dict(data_dict, orient="index")
+
+    # Initialize an empty list for the reordered columns
+    reordered_columns = []
+
+    # Add columns from columns_order if they exist in the DataFrame
+    for col in columns_order:
+        if col in data_frame.columns:
+            reordered_columns.append(col)
+    # Add all remaining columns from the DataFrame that were not explicitly in columns_order
+    remaining_columns = [
+        col for col in data_frame.columns if col not in reordered_columns]
+    reordered_columns.extend(remaining_columns)
+
+    # Create the reordered DataFrame
+    data_frame = data_frame[reordered_columns]
+    
+    return data_frame
+
+class ExcelWriter:
+    def __init__(self):
+        self.workbook: Optional[xlsxwriter.Workbook] = None
+        self.file_path: Path = None
+        self.total_time: float = 0.0
+        
+    def open_workbook(self, output_file: Path) -> None:
+        self.file_path = Path(output_file)
+
+        # Ensure the directory path exists
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create a new XlsxWriter workbook and add a worksheet.
+        self.workbook = xlsxwriter.Workbook(self.file_path)
+
+        # Disable the interpretation of cells starting with '=' as formulas
+        self.workbook.strings_to_formulas = False
+        logging.info(f"Workbook {self.file_path}: Created")
+
+    def add_sheet(self, data_dict: Dict_Table, output_sheet: str, columns_order: Optional[List_Str] = None) -> None:
+        start_time: float = time.time()
+        if self.workbook is None:
+            raise ValueError("Workbook is not open. Call open_workbook() before adding sheets.")
+
+        worksheet = self.workbook.add_worksheet(output_sheet)
+
+        # Get a prioritized and ordered list of all column names in the two-level data_dict:
+        column_names: List[str] = []
+        if columns_order is not None:
+            column_names.extend(column for column in columns_order if column not in column_names)
+        for inner_dict in data_dict.values():
+            column_names.extend(key for key in inner_dict.keys() if key not in column_names)
+
+        # Use a list to store maximum column widths, initialized with zeros
+        max_column_widths: List[float] = [0.0] * len(column_names)
+
+        # Define a cell format for the header row.
+        header_format = self.workbook.add_format({'bold': True, 'bg_color': 'cyan'})
+
+        # Write the header row (column names).
+        row_num = 0
+        for col_num, column_name in enumerate(column_names, start=0):
+            worksheet.write_string(row_num, col_num, column_name, header_format)
+            max_column_widths[col_num] = len(column_name) + EXCEL_COLUMN_FILTER_SIZE
+
+        # Create a custom text format to set the cell type to text (when needed)
+        #text_format = workbook.add_format({'num_format': '@'})
+
+        # Write the data from data_dict to the worksheet
+        row_num = 1
+        for outer_key, inner_dict in data_dict.items():
+            for col_num, column_name in enumerate(column_names, start=0):
+                if column_name in inner_dict:                       # Check if column exist in the record
+                    cell_value = inner_dict.get(column_name, '')    # Retrieve the value
+                    if cell_value != '':                            # check if value is not empty in that column!
+                        # write the cell value
+                        worksheet.write_string(row_num, col_num, str(cell_value))
+                        # fill-in max_column_width in parallel
+                        max_column_widths[col_num] = max(max_column_widths[col_num], len(str(cell_value)))
+            row_num += 1
+
+        col_num = 0
+        for max_width in max_column_widths:
+            max_width = min(max_width, MAX_EXCEL_COLUMN_SIZE)
+            worksheet.set_column(col_num, col_num, max_width)
+            col_num += 1
+
+        # Freeze the first row
+        worksheet.freeze_panes(1, 0)
+        
+        # Enable data filtering on the first row
+        worksheet.autofilter(0, 0, row_num - 1, col_num - 1)
+        logging.info(f"Workbook {self.file_path}: Sheet {output_sheet} Added ({elapsed_time(start_time)})")
+        self.total_time += (time.time() - start_time)
+    def close_workbook(self) -> None:
+        if self.workbook is None:
+            raise ValueError("Workbook is not open. Call open_workbook() before closing.")
+
+        # Save the workbook
+        self.workbook.close()
+        self.workbook = None
+        logging.info(f"Workbook {self.file_path}: Saved ({self.total_time:.1f})")
 
 # The following code will only run if this module is executed directly
 if __name__ == "__main__":
