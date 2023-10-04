@@ -1,0 +1,5 @@
+*
+!.gitignore
+!/
+!bg3data_*.py
+!bg3tool_*.py
